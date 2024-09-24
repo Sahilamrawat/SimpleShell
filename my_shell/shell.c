@@ -7,7 +7,57 @@
 #include <sys/wait.h>
 #include <ctype.h>
 #include <time.h>
-#include "shell.h"
+#include <time.h>
+
+/* Constants */
+#define ARG_MAX_COUNT    1024      /* max number of arguments to a command */
+#define HISTORY_MAXITEMS 100       /* max number of elements in the history */
+
+/* Type declarations */
+struct command {                  
+	int argc;                  /* number of arguments in the command */
+	char *name;                /* name of the command */
+	char *argv[ARG_MAX_COUNT]; /* the arguments themselves */
+};
+
+struct commands {                  
+	int cmd_count;             /* number of commands in the pipeline */
+	struct command *cmds[];    /* the commands themselves */
+};
+
+/* Global variables */
+extern char **history;           /* Array to store history of commands */
+extern int history_len;          /* Length of the command history */
+extern pid_t *pids;              /* Array to store process IDs of commands */
+extern time_t *start_times;      /* Array to store start times of commands */
+extern double *durations;        /* Array to store execution durations of commands */
+
+/* Function Prototypes */
+
+/* Initializes the history storage */
+void init_history(void);                                
+
+/* Adds a command to the history along with its PID and execution duration */
+void add_to_history(char *cmd, pid_t pid, double duration);
+
+/* Prints the command history with associated PIDs and durations */
+void print_history(void);
+
+/* Launches an external command by forking and executing */
+void launch_command(char *cmd);
+
+/* Checks if a string input is blank (contains only whitespace) */
+int is_blank(char *input);
+
+/* Handles built-in commands such as 'exit', 'history', and 'cd'. 
+ * Returns -1 for 'exit', 0 for a successful built-in command execution, 
+ * and 1 if the input is not a built-in command.
+ */
+int handle_builtin(char *input);
+
+void execute_single_command(char *cmd);
+void execute_piped_commands(char *cmd_parts[], int num_parts);
+
 
 /* Global variables */
 char **history;
@@ -64,7 +114,7 @@ void add_to_history(char *cmd, pid_t pid, double duration) {
 /* Print the command history */
 void print_history() {
     for (int i = 0; i < history_len; i++) {
-        printf("%d %s (pid: %d, duration: %.2f seconds)\n", i, history[i], pids[i], durations[i]);
+        printf("%d %s (pid: %d, duration: %.2f seconds)\n", i+1, history[i], pids[i], durations[i]);
     }
 }
 
@@ -140,11 +190,14 @@ void execute_single_command(char *cmd) {
         perror("exec");
         exit(EXIT_FAILURE);
     } else if (pid > 0) {
-        /* Parent process */
+        time_t start = time(NULL);
+        int status;
+        
         if (!background) {
             /* Wait for the foreground process */
-            int status;
             waitpid(pid, &status, 0);
+            double duration = difftime(time(NULL), start);
+            add_to_history(cmd, pid, duration);  // Pass pid instead of &status
         } else {
             /* Background process: do not wait */
             printf("[Background] PID: %d running command: %s\n", pid, cmd);
@@ -156,6 +209,7 @@ void execute_single_command(char *cmd) {
         perror("fork");
     }
 }
+
 
 /* Function to handle piped commands */
 void execute_piped_commands(char *cmd_parts[], int num_parts) {
@@ -208,6 +262,7 @@ int is_blank(char *input) {
 /* Handle built-in commands */
 int handle_builtin(char *input) {
     if (strcmp(input, "exit") == 0) {
+    
         return -1;
     }
     if (strcmp(input, "history") == 0) {
@@ -278,4 +333,3 @@ int main(void) {
 
     return 0;
 }
-
