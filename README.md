@@ -20,7 +20,6 @@ To compile the shell, use the following commands:
 
 ```bash
 gcc -o shell shell.c
-./shell
 ```
 
 ## Usage
@@ -28,12 +27,12 @@ gcc -o shell shell.c
 Run the shell by executing the compiled binary:
 
 ```bash
-./simple-shell
+./shell
 ```
 
 ### Supported Commands
 
-- **Single Commands**: Execute standard commands like `ls`, `echo`, `cat`, etc.
+- **Single Commands**: Execute standard commands like `ls`, `echo`, `cat`, `uniq`,  etc.
   ```bash
   ls -l
   ```
