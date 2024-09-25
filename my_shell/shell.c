@@ -8,71 +8,18 @@
 #include <ctype.h>
 #include <time.h>
 
+#define ARG_MAX_COUNT    1024  /* Maximum number of arguments to a command */
+#define HISTORY_MAXITEMS 100   /* Maximum number of elements in the history */
+#define MAX_BACKGROUND_PROCESSES 100  /* Max number of background processes */
 
-
-#include <time.h>
-
-/* Constants */
-#define ARG_MAX_COUNT    1024      /* max number of arguments to a command */
-#define HISTORY_MAXITEMS 100       /* max number of elements in the history */
-
-/* Type declarations */
-struct command {                  
-	int argc;                  /* number of arguments in the command */
-	char *name;                /* name of the command */
-	char *argv[ARG_MAX_COUNT]; /* the arguments themselves */
-};
-
-struct commands {                  
-	int cmd_count;             /* number of commands in the pipeline */
-	struct command *cmds[];    /* the commands themselves */
-};
-
-/* Global variables */
-extern char **history;           /* Array to store history of commands */
-extern int history_len;          /* Length of the command history */
-extern pid_t *pids;              /* Array to store process IDs of commands */
-extern time_t *start_times;      /* Array to store start times of commands */
-extern double *durations;        /* Array to store execution durations of commands */
-
-/* Function Prototypes */
-
-/* Initializes the history storage */
-void init_history(void);                                
-
-/* Adds a command to the history along with its PID and execution duration */
-void add_to_history(char *cmd, pid_t pid, double duration);
-
-/* Prints the command history with associated PIDs and durations */
-void print_history(void);
-
-/* Launches an external command by forking and executing */
-void launch_command(char *cmd);
-
-/* Checks if a string input is blank (contains only whitespace) */
-int is_blank(char *input);
-
-/* Handles built-in commands such as 'exit', 'history', and 'cd'. 
- * Returns -1 for 'exit', 0 for a successful built-in command execution, 
- * and 1 if the input is not a built-in command.
- */
-int handle_builtin(char *input);
-
-void execute_single_command(char *cmd);
-void execute_piped_commands(char *cmd_parts[], int num_parts);
-
-
-/* Global variables */
+/* Global variables to store command history and related data */
 char **history;
 int history_len = 0;
 pid_t *pids;
 time_t *start_times;
 double *durations;
 
-#define ARG_MAX_COUNT 1024  /* Match the definition in shell.h */
-#define MAX_BACKGROUND_PROCESSES 100
-
-/* Struct for background processes */
+/* Struct for handling background processes */
 typedef struct {
     pid_t pid;
     char *cmd;
@@ -81,7 +28,9 @@ typedef struct {
 BackgroundProcess background_processes[MAX_BACKGROUND_PROCESSES];
 int bg_process_count = 0;
 
-/* Initialize history array */
+/* Initializes the history data structures.
+ * Allocates memory for history, PIDs, start times, and durations.
+ */
 void init_history() {
     history = calloc(HISTORY_MAXITEMS, sizeof(char *));
     pids = calloc(HISTORY_MAXITEMS, sizeof(pid_t));
@@ -93,9 +42,11 @@ void init_history() {
     }
 }
 
-/* Add a command to the history */
+/* Adds a command to the history along with its PID and execution duration.
+ * If the history exceeds its limit, it shifts older entries out.
+ */
 void add_to_history(char *cmd, pid_t pid, double duration) {
-    char *line = strdup(cmd);  // Store the entire command line
+    char *line = strdup(cmd);  // Duplicate command to store in history
     if (line == NULL) return;
 
     // If history is full, remove the oldest entry
@@ -108,7 +59,6 @@ void add_to_history(char *cmd, pid_t pid, double duration) {
         history_len--;
     }
 
-    // Add the new command to history
     history[history_len] = line;
     pids[history_len] = pid;
     start_times[history_len] = time(NULL);
@@ -116,22 +66,23 @@ void add_to_history(char *cmd, pid_t pid, double duration) {
     history_len++;
 }
 
-/* Print the command history */
+/* Prints the command history without additional details (basic view). */
 void print_history() {
     for (int i = 0; i < history_len; i++) {
         printf("%d %s \n", i + 1, history[i]);
     }
-   
 }
 
-/* Print the Execution history */
+/* Prints the command history with PID and execution duration details. */
 void print_history1() {
     for (int i = 0; i < history_len; i++) {
         printf("%d %s (pid: %d, duration: %.2f seconds)\n", i + 1, history[i], pids[i], durations[i]);
     }
 }
 
-/* Check for completed background processes */
+/* Checks for background processes that have finished execution.
+ * If a process is completed, it removes the process from the tracking array.
+ */
 void check_background_processes() {
     for (int i = 0; i < bg_process_count; i++) {
         int status;
@@ -139,61 +90,31 @@ void check_background_processes() {
         
         if (result == background_processes[i].pid) {
             printf("[Background] PID: %d finished command: %s\n", background_processes[i].pid, background_processes[i].cmd);
-            free(background_processes[i].cmd); // Free command string
-            // Shift remaining background processes
+            free(background_processes[i].cmd);
             for (int j = i; j < bg_process_count - 1; j++) {
                 background_processes[j] = background_processes[j + 1];
             }
             bg_process_count--;
-            i--; // Adjust index since we shifted
+            i--;  // Decrement index to avoid skipping the next entry
         }
     }
 }
 
-/* Execute a command using exec, supporting pipes and background processes */
-/* Execute a command using exec, supporting pipes and background processes */
-void launch_command(char *cmd) {
-    char original_cmd[ARG_MAX_COUNT]; 
-    strncpy(original_cmd, cmd, ARG_MAX_COUNT); // Save the original command with arguments
-
-    char *cmd_part = strtok(cmd, "|");
-    char *cmd_parts[ARG_MAX_COUNT];
-    int num_parts = 0;
-
-    while (cmd_part != NULL) {
-        cmd_parts[num_parts++] = cmd_part;
-        cmd_part = strtok(NULL, "|");
-    }
-
-    if (num_parts == 1) {
-        execute_single_command(cmd_parts[0]);
-    } else {
-        execute_piped_commands(cmd_parts, num_parts);
-    }
-
-    // After execution, add the original command with its arguments to history
-    time_t start = time(NULL); // Use this to calculate duration if needed
-    add_to_history(original_cmd, getpid(), difftime(time(NULL), start));
-
-    // Check for completed background processes
-    check_background_processes();
-}
-
-
-/* Helper function to execute a single command */
+/* Executes a single command without pipes.
+ * Supports background execution (indicated by a trailing '&').
+ */
 void execute_single_command(char *cmd) {
     char *args[ARG_MAX_COUNT];
     int tokenCount = 0;
     int background = 0;
 
-    /* Check if the command ends with & (for background) */
     size_t cmd_len = strlen(cmd);
     if (cmd[cmd_len - 1] == '&') {
-        background = 1;
-        cmd[cmd_len - 1] = '\0';  // Remove the & character
+        background = 1;  // Command should run in the background
+        cmd[cmd_len - 1] = '\0';
     }
 
-    /* Parse the command */
+    // Tokenize the command into arguments
     char *token = strtok(cmd, " ");
     while (token != NULL && tokenCount < ARG_MAX_COUNT) {
         args[tokenCount++] = token;
@@ -201,51 +122,47 @@ void execute_single_command(char *cmd) {
     }
     args[tokenCount] = NULL;
 
+    // Fork to create a child process to run the command
     pid_t pid = fork();
-    if (pid == 0) {
-        /* Child process */
-        execvp(args[0], args);
-        perror("exec");
+    if (pid == 0) {  // Child process
+        execvp(args[0], args);  // Execute the command
+        perror("exec");  // If exec fails
         exit(EXIT_FAILURE);
-    } else if (pid > 0) {
+    } else if (pid > 0) {  // Parent process
         time_t start = time(NULL);
         int status;
         
-        if (!background) {
-            /* Wait for the foreground process */
-            waitpid(pid, &status, 0);
+        if (!background) {  // Foreground process
+            waitpid(pid, &status, 0);  // Wait for the process to complete
             double duration = difftime(time(NULL), start);
-            // add_to_history(cmd, pid, duration);  // Pass pid instead of &status
-        } else {
-            /* Background process: do not wait */
+        } else {  // Background process
             printf("[Background] PID: %d running command: %s\n", pid, cmd);
             if (bg_process_count < MAX_BACKGROUND_PROCESSES) {
                 background_processes[bg_process_count++] = (BackgroundProcess){pid, strdup(cmd)};
             }
         }
     } else {
-        perror("fork");
+        perror("fork");  // Fork failed
     }
 }
 
-
-/* Function to handle piped commands */
+/* Executes a series of piped commands by creating multiple processes.
+ * Uses pipes to connect the output of one process to the input of another.
+ */
 void execute_piped_commands(char *cmd_parts[], int num_parts) {
     int fd[2];
     pid_t pid;
-    int fd_in = 0;  // Input for the next command (initially standard input)
+    int fd_in = 0;
 
     for (int i = 0; i < num_parts; i++) {
-        pipe(fd);  // Create a pipe
+        pipe(fd);
 
-        if ((pid = fork()) == 0) {
-            // Child process
-            dup2(fd_in, 0);  // Set input to the previous pipe
+        if ((pid = fork()) == 0) {  // Child process
+            dup2(fd_in, 0);  // Use the previous process's output as input
             if (i < num_parts - 1) {
-                dup2(fd[1], 1); // Redirect output if not the last command
+                dup2(fd[1], 1);  // Redirect output to the next pipe
             }
-
-            close(fd[0]);  // Close unused read end
+            close(fd[0]);  // Close the read end of the pipe
             char *args[ARG_MAX_COUNT];
             int tokenCount = 0;
             char *token = strtok(cmd_parts[i], " ");
@@ -259,15 +176,42 @@ void execute_piped_commands(char *cmd_parts[], int num_parts) {
             perror("exec");
             exit(EXIT_FAILURE);
         } else {
-            // Parent process: close the write end of the pipe
-            close(fd[1]);
-            fd_in = fd[0];  // Save the input for the next command
+            close(fd[1]);  // Close the write end of the pipe
+            fd_in = fd[0];  // Save the read end for the next command
         }
     }
-    wait(NULL);  // Wait for the last child
+    wait(NULL);  // Wait for the last process to complete
 }
 
-/* Check if a command is blank */
+/* Parses a command and determines whether to execute it as a single command
+ * or a series of piped commands.
+ */
+void launch_command(char *cmd) {
+    char original_cmd[ARG_MAX_COUNT]; 
+    strncpy(original_cmd, cmd, ARG_MAX_COUNT);
+
+    // Split the command on pipes (|) if they exist
+    char *cmd_part = strtok(cmd, "|");
+    char *cmd_parts[ARG_MAX_COUNT];
+    int num_parts = 0;
+
+    while (cmd_part != NULL) {
+        cmd_parts[num_parts++] = cmd_part;
+        cmd_part = strtok(NULL, "|");
+    }
+
+    if (num_parts == 1) {
+        execute_single_command(cmd_parts[0]);  // Single command execution
+    } else {
+        execute_piped_commands(cmd_parts, num_parts);  // Piped command execution
+    }
+
+    time_t start = time(NULL);
+    add_to_history(original_cmd, getpid(), difftime(time(NULL), start));  // Add command to history
+    check_background_processes();  // Check for any completed background processes
+}
+
+/* Checks if a given input string is blank (i.e., contains only whitespace). */
 int is_blank(char *input) {
     int n = strlen(input);
     for (int i = 0; i < n; i++) {
@@ -277,65 +221,68 @@ int is_blank(char *input) {
     return 1;
 }
 
-/* Handle built-in commands */
+/* Handles built-in shell commands like 'exit', 'history', and 'cd'.
+ * Returns -1 if 'exit' is called to terminate the shell, 
+ * 0 for successful built-in command execution,
+ * and 1 if it's not a built-in command.
+ */
 int handle_builtin(char *input) {
     if (strcmp(input, "exit") == 0) {
-    
-        return -1;
+        return -1;  // Exit command
     }
     if (strcmp(input, "history") == 0) {
-        print_history();
+        print_history();  // Display command history
         return 0;
     }
-    if (strncmp(input, "cd", 2) == 0) {
+    if (strncmp(input, "cd", 2) == 0) {  // Change directory
         char *dir = strtok(input + 3, " ");
         if (chdir(dir) != 0) {
-            perror("cd");
+            perror("cd");  // Error in changing directory
         }
         return 0;
     }
     return 1;  // Not a built-in command
 }
 
-
-
-/* Main function */
+/* Main loop for the shell.
+ * Continuously prompts the user for input, processes commands, 
+ * and handles built-in commands, background processes, and history.
+ */
 int main(void) {
-    init_history();
+    init_history();  // Initialize history storage
     do {
-        check_background_processes(); // Check for completed background processes
-        printf("simple-shell> ");
-        fflush(stdout); // Ensure prompt is displayed immediately
+        check_background_processes();  // Check for completed background processes
+        printf("simple-shell>$$> ");
+        fflush(stdout);
 
         char *input = NULL;
         size_t len = 0;
-        ssize_t nread = getline(&input, &len, stdin);
+        ssize_t nread = getline(&input, &len, stdin);  // Read user input
         if (nread == -1) {
             free(input);
-            break;  // Handle EOF (Ctrl+D)
+            break;
         }
 
-        input[nread - 1] = '\0';  // Remove newline
+        input[nread - 1] = '\0';  // Remove the newline character
         if (is_blank(input)) {
             free(input);
             continue;
         }
 
-        int ret = handle_builtin(input);
+        int ret = handle_builtin(input);  // Handle built-in commands
         if (ret == -1) {
             break;  // Exit shell
         } else if (ret == 1) {
-            launch_command(input);  // Launch external command
+            launch_command(input);  // Execute external command
         }
 
         free(input);
     } while (1);
 
-    /* Print execution details of all commands in history */
     printf("Execution summary:\n");
-    print_history1();
+    print_history1();  // Print detailed execution history
 
-    /* Cleanup */
+    // Clean up allocated memory
     for (int i = 0; i < history_len; i++) {
         free(history[i]);
     }
@@ -344,7 +291,6 @@ int main(void) {
     free(start_times);
     free(durations);
 
-    // Free background process commands
     for (int i = 0; i < bg_process_count; i++) {
         free(background_processes[i].cmd);
     }
