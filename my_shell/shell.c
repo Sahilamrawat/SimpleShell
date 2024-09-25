@@ -7,6 +7,9 @@
 #include <sys/wait.h>
 #include <ctype.h>
 #include <time.h>
+
+
+
 #include <time.h>
 
 /* Constants */
@@ -92,9 +95,10 @@ void init_history() {
 
 /* Add a command to the history */
 void add_to_history(char *cmd, pid_t pid, double duration) {
-    char *line = strdup(cmd);
+    char *line = strdup(cmd);  // Store the entire command line
     if (line == NULL) return;
 
+    // If history is full, remove the oldest entry
     if (history_len == HISTORY_MAXITEMS) {
         free(history[0]);
         memmove(history, history + 1, sizeof(char *) * (HISTORY_MAXITEMS - 1));
@@ -104,6 +108,7 @@ void add_to_history(char *cmd, pid_t pid, double duration) {
         history_len--;
     }
 
+    // Add the new command to history
     history[history_len] = line;
     pids[history_len] = pid;
     start_times[history_len] = time(NULL);
@@ -114,7 +119,15 @@ void add_to_history(char *cmd, pid_t pid, double duration) {
 /* Print the command history */
 void print_history() {
     for (int i = 0; i < history_len; i++) {
-        printf("%d %s (pid: %d, duration: %.2f seconds)\n", i+1, history[i], pids[i], durations[i]);
+        printf("%d %s \n", i + 1, history[i]);
+    }
+   
+}
+
+/* Print the Execution history */
+void print_history1() {
+    for (int i = 0; i < history_len; i++) {
+        printf("%d %s (pid: %d, duration: %.2f seconds)\n", i + 1, history[i], pids[i], durations[i]);
     }
 }
 
@@ -138,11 +151,11 @@ void check_background_processes() {
 }
 
 /* Execute a command using exec, supporting pipes and background processes */
+/* Execute a command using exec, supporting pipes and background processes */
 void launch_command(char *cmd) {
-    char *args[ARG_MAX_COUNT];
-    int tokenCount = 0;
+    char original_cmd[ARG_MAX_COUNT]; 
+    strncpy(original_cmd, cmd, ARG_MAX_COUNT); // Save the original command with arguments
 
-    /* Check for pipes in the command */
     char *cmd_part = strtok(cmd, "|");
     char *cmd_parts[ARG_MAX_COUNT];
     int num_parts = 0;
@@ -152,15 +165,20 @@ void launch_command(char *cmd) {
         cmd_part = strtok(NULL, "|");
     }
 
-    /* If there's no pipe, just execute the command normally */
     if (num_parts == 1) {
         execute_single_command(cmd_parts[0]);
     } else {
         execute_piped_commands(cmd_parts, num_parts);
     }
+
+    // After execution, add the original command with its arguments to history
+    time_t start = time(NULL); // Use this to calculate duration if needed
+    add_to_history(original_cmd, getpid(), difftime(time(NULL), start));
+
     // Check for completed background processes
     check_background_processes();
 }
+
 
 /* Helper function to execute a single command */
 void execute_single_command(char *cmd) {
@@ -197,7 +215,7 @@ void execute_single_command(char *cmd) {
             /* Wait for the foreground process */
             waitpid(pid, &status, 0);
             double duration = difftime(time(NULL), start);
-            add_to_history(cmd, pid, duration);  // Pass pid instead of &status
+            // add_to_history(cmd, pid, duration);  // Pass pid instead of &status
         } else {
             /* Background process: do not wait */
             printf("[Background] PID: %d running command: %s\n", pid, cmd);
@@ -315,7 +333,7 @@ int main(void) {
 
     /* Print execution details of all commands in history */
     printf("Execution summary:\n");
-    print_history();
+    print_history1();
 
     /* Cleanup */
     for (int i = 0; i < history_len; i++) {
