@@ -103,6 +103,7 @@ void check_background_processes() {
 /* Executes a single command without pipes.
  * Supports background execution (indicated by a trailing '&').
  */
+
 void execute_single_command(char *cmd) {
     char *args[ARG_MAX_COUNT];
     int tokenCount = 0;
@@ -136,8 +137,24 @@ void execute_single_command(char *cmd) {
         if (!background) {  // Foreground process
             waitpid(pid, &status, 0);  // Wait for the process to complete
             time_t end = time(NULL);  // End measuring time
-            double duration = difftime(end, start);  // Calculate duration
-            add_to_history(cmd, pid, duration);  // Add to history with actual duration
+
+            // Only add to history if the command executed successfully
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                double duration = difftime(end, start);  // Calculate duration
+                
+                // Create a command string with its arguments for history
+                char *full_command = malloc(ARG_MAX_COUNT);
+                if (full_command) {
+                    snprintf(full_command, ARG_MAX_COUNT, "%s", args[0]);
+                    for (int i = 1; i < tokenCount; i++) {
+                        strncat(full_command, " ", ARG_MAX_COUNT - strlen(full_command) - 1);
+                        strncat(full_command, args[i], ARG_MAX_COUNT - strlen(full_command) - 1);
+                    }
+                    
+                    add_to_history(full_command, pid, duration);  // Add the formatted command to history
+                    free(full_command);  // Free allocated memory for the full command
+                }
+            }
         } else {  // Background process
             printf("[Background] PID: %d running command: %s\n", pid, args[0]);
             add_to_history(cmd, pid, 0.0);  // Store background process with 0 duration for now
@@ -151,16 +168,27 @@ void execute_single_command(char *cmd) {
 }
 
 
+
 /* Executes a series of piped commands by creating multiple processes.
  * Uses pipes to connect the output of one process to the input of another.
  */
-void execute_piped_commands(char *cmd_parts[], int num_parts) {
+void execute_piped_commands(char *cmd_parts[], int num_parts, char *original_command) {
     int fd[2];
     pid_t pid;
     int fd_in = 0;
 
     for (int i = 0; i < num_parts; i++) {
         pipe(fd);
+        
+        // Prepare args for the current command
+        char *args[ARG_MAX_COUNT];
+        int tokenCount = 0;
+        char *token = strtok(cmd_parts[i], " ");
+        while (token != NULL && tokenCount < ARG_MAX_COUNT) {
+            args[tokenCount++] = token;
+            token = strtok(NULL, " ");
+        }
+        args[tokenCount] = NULL;  // Null terminate the arguments
 
         if ((pid = fork()) == 0) {  // Child process
             dup2(fd_in, 0);  // Use the previous process's output as input
@@ -168,15 +196,7 @@ void execute_piped_commands(char *cmd_parts[], int num_parts) {
                 dup2(fd[1], 1);  // Redirect output to the next pipe
             }
             close(fd[0]);  // Close the read end of the pipe
-            char *args[ARG_MAX_COUNT];
-            int tokenCount = 0;
-            char *token = strtok(cmd_parts[i], " ");
-            while (token != NULL && tokenCount < ARG_MAX_COUNT) {
-                args[tokenCount++] = token;
-                token = strtok(NULL, " ");
-            }
-            args[tokenCount] = NULL;
-
+            
             execvp(args[0], args);  // Execute the command
             perror("exec");
             exit(EXIT_FAILURE);
@@ -185,15 +205,26 @@ void execute_piped_commands(char *cmd_parts[], int num_parts) {
             fd_in = fd[0];  // Save the read end for the next command
         }
     }
-    wait(NULL);  // Wait for the last process to complete
+
+    // Wait for the last process to complete
+    int status;
+    waitpid(pid, &status, 0);
+    
+    // Check if the piped command executed successfully
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        add_to_history(original_command, pid, 0.0);  // Add the entire piped command to history
+    }
 }
+
+
+
 
 /* Parses a command and determines whether to execute it as a single command
  * or a series of piped commands.
  */
 void launch_command(char *cmd) {
     char original_cmd[ARG_MAX_COUNT]; 
-    strncpy(original_cmd, cmd, ARG_MAX_COUNT);
+    strncpy(original_cmd, cmd, ARG_MAX_COUNT);  // Store the original command
 
     // Split the command on pipes (|) if they exist
     char *cmd_part = strtok(cmd, "|");
@@ -206,11 +237,10 @@ void launch_command(char *cmd) {
     }
 
     if (num_parts == 1) {
-        execute_single_command(cmd_parts[0]);  // Single command execution
+        execute_single_command(original_cmd);  // Pass original command for history
     } else {
-        execute_piped_commands(cmd_parts, num_parts);  // Piped command execution
+        execute_piped_commands(cmd_parts, num_parts, original_cmd);  // Pass the whole command for history
     }
-
 
     check_background_processes();  // Check for any completed background processes
 }
@@ -231,20 +261,27 @@ int is_blank(char *input) {
  * and 1 if it's not a built-in command.
  */
 int handle_builtin(char *input) {
+    // Record the command in history
     if (strcmp(input, "exit") == 0) {
+        add_to_history(input, 0, 0.0);  // Add 'exit' command to history
         return -1;  // Exit command
     }
+
     if (strcmp(input, "history") == 0) {
         print_history();  // Display command history
+        add_to_history(input, 0, 0.0);  // Add 'history' command to history
         return 0;
     }
+
     if (strncmp(input, "cd", 2) == 0) {  // Change directory
         char *dir = strtok(input + 3, " ");
         if (chdir(dir) != 0) {
             perror("cd");  // Error in changing directory
         }
+        add_to_history(input, 0, 0.0);  // Add 'cd' command to history
         return 0;
     }
+
     return 1;  // Not a built-in command
 }
 
