@@ -122,29 +122,34 @@ void execute_single_command(char *cmd) {
     }
     args[tokenCount] = NULL;
 
-    // Fork to create a child process to run the command
+    // Record the start time before forking
+    time_t start = time(NULL);  // Start measuring time
+
     pid_t pid = fork();
     if (pid == 0) {  // Child process
         execvp(args[0], args);  // Execute the command
         perror("exec");  // If exec fails
         exit(EXIT_FAILURE);
     } else if (pid > 0) {  // Parent process
-        time_t start = time(NULL);
         int status;
-        
+
         if (!background) {  // Foreground process
             waitpid(pid, &status, 0);  // Wait for the process to complete
-            double duration = difftime(time(NULL), start);
+            time_t end = time(NULL);  // End measuring time
+            double duration = difftime(end, start);  // Calculate duration
+            add_to_history(cmd, pid, duration);  // Add to history with actual duration
         } else {  // Background process
-            printf("[Background] PID: %d running command: %s\n", pid, cmd);
+            printf("[Background] PID: %d running command: %s\n", pid, args[0]);
+            add_to_history(cmd, pid, 0.0);  // Store background process with 0 duration for now
             if (bg_process_count < MAX_BACKGROUND_PROCESSES) {
-                background_processes[bg_process_count++] = (BackgroundProcess){pid, strdup(cmd)};
+                background_processes[bg_process_count++] = (BackgroundProcess){pid, strdup(args[0])};
             }
         }
     } else {
         perror("fork");  // Fork failed
     }
 }
+
 
 /* Executes a series of piped commands by creating multiple processes.
  * Uses pipes to connect the output of one process to the input of another.
@@ -206,8 +211,7 @@ void launch_command(char *cmd) {
         execute_piped_commands(cmd_parts, num_parts);  // Piped command execution
     }
 
-    time_t start = time(NULL);
-    add_to_history(original_cmd, getpid(), difftime(time(NULL), start));  // Add command to history
+
     check_background_processes();  // Check for any completed background processes
 }
 
